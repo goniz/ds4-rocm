@@ -25,7 +25,7 @@ __device__ __forceinline__ static int32_t __vsub4(int32_t a_, int32_t b_) {
     for (int i = 0; i < 4; i++) {
         uint32_t ba = (a >> (i * 8)) & 0xFF;
         uint32_t bb = (b >> (i * 8)) & 0xFF;
-        res |= ((ba > bb ? ba - bb : 0) << (i * 8));
+        res |= (((ba - bb) & 0xFF) << (i * 8));
     }
     return (int32_t)res;
 }
