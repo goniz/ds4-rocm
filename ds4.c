@@ -71,7 +71,7 @@ static const char DS4_REASONING_EFFORT_MAX_PREFIX[] =
 #define DS4_THINK_MAX_MIN_CONTEXT 393216u
 
 static bool ds4_backend_uses_graph(ds4_backend backend) {
-    return backend == DS4_BACKEND_METAL || backend == DS4_BACKEND_CUDA;
+    return backend == DS4_BACKEND_METAL || backend == DS4_BACKEND_CUDA || backend == DS4_BACKEND_ROCM;
 }
 
 /* =========================================================================
@@ -1424,7 +1424,7 @@ static bool accelerator_cache_model_tensor_spans(const ds4_model *m, uint64_t *c
 }
 
 static bool accelerator_cache_model_tensors(ds4_backend backend, const ds4_model *m) {
-    if (backend != DS4_BACKEND_CUDA) return true;
+    if (backend != DS4_BACKEND_CUDA && backend != DS4_BACKEND_ROCM) return true;
     if (!m || !m->map || m->size == 0) return false;
     if (getenv("DS4_CUDA_DIRECT_MODEL") != NULL) {
         return true;
@@ -15141,6 +15141,7 @@ const char *ds4_backend_name(ds4_backend backend) {
     switch (backend) {
     case DS4_BACKEND_METAL: return "metal";
     case DS4_BACKEND_CUDA:  return "cuda";
+    case DS4_BACKEND_ROCM:  return "rocm";
     case DS4_BACKEND_CPU:   return "cpu";
     }
     return "unknown";
@@ -16537,6 +16538,14 @@ int ds4_engine_open(ds4_engine **out, const ds4_engine_options *opt) {
     if (e->backend == DS4_BACKEND_CUDA) {
 #ifdef __APPLE__
         fprintf(stderr, "ds4: CUDA backend requested but this build is linked with Metal, not CUDA\n");
+        ds4_engine_close(e);
+        *out = NULL;
+        return 1;
+#endif
+    }
+    if (e->backend == DS4_BACKEND_ROCM) {
+#ifdef __APPLE__
+        fprintf(stderr, "ds4: ROCm backend requested but ROCm is only available on Linux\n");
         ds4_engine_close(e);
         *out = NULL;
         return 1;
