@@ -1453,7 +1453,8 @@ static bool accelerator_cache_model_tensors(ds4_backend backend, const ds4_model
         const double t1 = now_sec();
         if (ds4_log_is_tty(stderr)) fputc('\n', stderr);
         fprintf(stderr,
-                "ds4: CUDA startup model cache prepared %.2f GiB of tensor spans in %.3fs\n",
+                "ds4: %s startup model cache prepared %.2f GiB of tensor spans in %.3fs\n",
+                ds4_backend_name(backend),
                 (double)cached / 1073741824.0,
                 t1 - t0);
     }

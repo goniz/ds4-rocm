@@ -26,3 +26,7 @@ sed -i 's/CUDA_QK_K/DS4_QK_K/g' "$F"
 sed -i 's/cuda_block_q2_K/ds4_block_q2_K/g' "$F"
 sed -i 's/cuda_block_q8_K/ds4_block_q8_K/g' "$F"
 sed -i 's/cuda_block_iq2_xxs/ds4_block_iq2_xxs/g' "$F"
+
+sed -i 's/"ds4: CUDA/"ds4: ROCm/g' "$F"
+
+perl -i -0pe 's/"ds4: ROCm backend initialized on %s \(sm_%d%d\)\\n",\n\s*prop\.name, prop\.major, prop\.minor/"ds4: ROCm backend initialized on %s (%s)\\n",\n                prop.name, prop.gcnArchName/s' "$F"
