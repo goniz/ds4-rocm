@@ -34,7 +34,7 @@ METAL_LDLIBS := $(LDLIBS)
 ROCM_HOME ?= /opt/rocm
 HIPIFY ?= $(ROCM_HOME)/bin/hipify-perl
 HIPCC ?= $(ROCM_HOME)/bin/hipcc
-HIPFLAGS ?= -O3 $(NATIVE_CPU_FLAG)
+HIPFLAGS ?= -O3 --offload-arch=native $(NATIVE_CPU_FLAG)
 ROCM_CFLAGS = $(CFLAGS) -DDS4_USE_ROCM
 endif
 
