@@ -8104,7 +8104,13 @@ typedef struct {
     uint32_t spec_prefix1_n_index_comp[DS4_N_LAYER];
     bool spec_capture_prefix1;
     uint32_t raw_cap;
+    /* Maximum compressed-row capacity across layers.  Shared work buffers use
+     * this worst-case size because ratio-4 indexer layers can still reach it. */
     uint32_t comp_cap;
+    /* Persistent compressed caches are per layer, so size them from the actual
+     * layer compression ratio instead of pessimistically using the ratio-4 cap
+     * for every ratio-128 layer. */
+    uint32_t layer_comp_cap[DS4_N_LAYER];
 
     /* Per-layer work tensors.  They are reused in place by every layer instead
      * of allocating a generic graph arena.  This is why the code is verbose but
@@ -8583,6 +8589,15 @@ static bool metal_graph_alloc_raw_cap(
     if (min_ratio == UINT32_MAX) min_ratio = ctx_size ? ctx_size : 1u;
     g->comp_cap = ctx_size / min_ratio + 2u;
     if (g->comp_cap < 2u) g->comp_cap = 2u;
+    for (uint32_t il = 0; il < DS4_N_LAYER; il++) {
+        const uint32_t ratio = ds4_layer_compress_ratio(il);
+        if (ratio == 0) {
+            g->layer_comp_cap[il] = 0;
+        } else {
+            g->layer_comp_cap[il] = ctx_size / ratio + 2u;
+            if (g->layer_comp_cap[il] < 2u) g->layer_comp_cap[il] = 2u;
+        }
+    }
 
     const uint64_t hc_dim = (uint64_t)DS4_N_HC * DS4_N_EMBD;
     const uint64_t mix_hc = 2ull * DS4_N_HC + (uint64_t)DS4_N_HC * DS4_N_HC;
@@ -8625,7 +8640,7 @@ static bool metal_graph_alloc_raw_cap(
             const uint32_t coff = ratio == 4 ? 2u : 1u;
             const uint64_t attn_width = (uint64_t)coff * DS4_N_HEAD_DIM;
             const uint64_t attn_rows = (uint64_t)coff * ratio;
-            g->layer_attn_comp_cache[il] = ds4_gpu_tensor_alloc((uint64_t)g->comp_cap * DS4_N_HEAD_DIM * sizeof(float));
+            g->layer_attn_comp_cache[il] = ds4_gpu_tensor_alloc((uint64_t)g->layer_comp_cap[il] * DS4_N_HEAD_DIM * sizeof(float));
             g->layer_attn_state_kv[il] = ds4_gpu_tensor_alloc(attn_width * attn_rows * sizeof(float));
             g->layer_attn_state_score[il] = ds4_gpu_tensor_alloc(attn_width * attn_rows * sizeof(float));
             if (enable_mtp) {
@@ -8646,7 +8661,7 @@ static bool metal_graph_alloc_raw_cap(
             if (ratio == 4) {
                 const uint64_t index_width = (uint64_t)coff * DS4_N_INDEXER_HEAD_DIM;
                 const uint64_t index_rows = (uint64_t)coff * ratio;
-                g->layer_index_comp_cache[il] = ds4_gpu_tensor_alloc((uint64_t)g->comp_cap * DS4_N_INDEXER_HEAD_DIM * sizeof(float));
+                g->layer_index_comp_cache[il] = ds4_gpu_tensor_alloc((uint64_t)g->layer_comp_cap[il] * DS4_N_INDEXER_HEAD_DIM * sizeof(float));
                 g->layer_index_state_kv[il] = ds4_gpu_tensor_alloc(index_width * index_rows * sizeof(float));
                 g->layer_index_state_score[il] = ds4_gpu_tensor_alloc(index_width * index_rows * sizeof(float));
                 if (enable_mtp) {
@@ -9243,7 +9258,7 @@ static bool metal_graph_encode_decode_layer(
             fprintf(stderr, "ds4: Metal graph compressor expects paired F16 compressor projections\n");
             ok = false;
         }
-        if (ok && emit && g->layer_n_comp[il] >= g->comp_cap) {
+        if (ok && emit && g->layer_n_comp[il] >= g->layer_comp_cap[il]) {
             fprintf(stderr, "ds4: Metal graph compressed KV cache capacity exceeded at layer %u\n", il);
             ok = false;
         }
@@ -9323,7 +9338,7 @@ static bool metal_graph_encode_decode_layer(
                 fprintf(stderr, "ds4: Metal graph indexer compressor expects paired F16 projections\n");
                 ok = false;
             }
-            if (ok && emit && g->layer_n_index_comp[il] >= g->comp_cap) {
+            if (ok && emit && g->layer_n_index_comp[il] >= g->layer_comp_cap[il]) {
                 fprintf(stderr, "ds4: Metal graph indexer compressed KV cache capacity exceeded at layer %u\n", il);
                 ok = false;
             }
@@ -11337,7 +11352,7 @@ static bool metal_graph_encode_layer_attention_batch(
         uint32_t n_comp = g->layer_n_comp[il];
         if (zero_prefix) {
             n_comp = n_tokens / ratio;
-            if (ok && n_comp > g->comp_cap) {
+            if (ok && n_comp > g->layer_comp_cap[il]) {
                 fprintf(stderr, "ds4: Metal layer-major compressed KV cache capacity exceeded at layer %u\n", il);
                 ok = false;
             }
@@ -11409,7 +11424,7 @@ static bool metal_graph_encode_layer_attention_batch(
             if (aligned_chunk) {
                 const uint32_t comp_before = g->layer_n_comp[il];
                 const uint32_t comp_chunk = n_tokens / ratio;
-                if (comp_before + comp_chunk > g->comp_cap) {
+                if (comp_before + comp_chunk > g->layer_comp_cap[il]) {
                     fprintf(stderr, "ds4: Metal graph compressed KV cache capacity exceeded at layer %u\n", il);
                     ok = false;
                 }
@@ -11515,7 +11530,7 @@ static bool metal_graph_encode_layer_attention_batch(
                 for (uint32_t t = 0; ok && t < n_tokens; t++) {
                     const uint32_t pos = pos0 + t;
                     const bool emit = ((pos + 1u) % ratio) == 0u;
-                    if (emit && g->layer_n_comp[il] >= g->comp_cap) {
+                    if (emit && g->layer_n_comp[il] >= g->layer_comp_cap[il]) {
                         fprintf(stderr, "ds4: Metal graph compressed KV cache capacity exceeded at layer %u\n", il);
                         ok = false;
                         break;
@@ -11643,7 +11658,7 @@ static bool metal_graph_encode_layer_attention_batch(
                                                      g->batch_attn_norm,
                                                      n_tokens) != 0;
             if (zero_prefix) {
-                if (ok && n_comp > g->comp_cap) {
+                if (ok && n_comp > g->layer_comp_cap[il]) {
                     fprintf(stderr, "ds4: Metal layer-major indexer cache capacity exceeded at layer %u\n", il);
                     ok = false;
                 }
@@ -11715,7 +11730,7 @@ static bool metal_graph_encode_layer_attention_batch(
                 if (aligned_chunk) {
                     const uint32_t index_before = g->layer_n_index_comp[il];
                     const uint32_t index_chunk = n_tokens / ratio;
-                    if (index_before + index_chunk > g->comp_cap) {
+                    if (index_before + index_chunk > g->layer_comp_cap[il]) {
                         fprintf(stderr, "ds4: Metal graph indexer compressed KV cache capacity exceeded at layer %u\n", il);
                         ok = false;
                     }
@@ -11795,7 +11810,7 @@ static bool metal_graph_encode_layer_attention_batch(
                     for (uint32_t t = 0; ok && t < n_tokens; t++) {
                         const uint32_t pos = pos0 + t;
                         const bool emit = ((pos + 1u) % ratio) == 0u;
-                        if (emit && g->layer_n_index_comp[il] >= g->comp_cap) {
+                        if (emit && g->layer_n_index_comp[il] >= g->layer_comp_cap[il]) {
                             fprintf(stderr, "ds4: Metal graph indexer compressed KV cache capacity exceeded at layer %u\n", il);
                             ok = false;
                             break;
@@ -12157,7 +12172,27 @@ static bool metal_graph_encode_layer_attention_batch(
                                                        pos % g->raw_cap,
                                                        DS4_N_HEAD_DIM) != 0;
                 }
-                if (ok) {
+                if (ok && comp_mask != NULL && n_selected != 0) {
+                    ok = ds4_gpu_attention_indexed_mixed_batch_heads_tensor(heads_view,
+                                                                              model->map,
+                                                                              model->size,
+                                                                              layer->attn_sinks->abs_offset,
+                                                                              q_view,
+                                                                              g->layer_raw_cache[il],
+                                                                              g->layer_attn_comp_cache[il],
+                                                                              g->comp_selected,
+                                                                              1,
+                                                                              pos,
+                                                                              n_raw,
+                                                                              g->raw_cap,
+                                                                              raw_start,
+                                                                              cur_comp,
+                                                                              n_selected,
+                                                                              g->raw_window,
+                                                                              ratio,
+                                                                              DS4_N_HEAD,
+                                                                              DS4_N_HEAD_DIM) != 0;
+                } else if (ok) {
                     ok = ds4_gpu_attention_decode_heads_tensor(heads_view,
                                                                  model->map,
                                                                  model->size,
@@ -13548,11 +13583,12 @@ ds4_context_memory ds4_context_memory_estimate(ds4_backend backend, int ctx_size
         for (uint32_t il = 0; il < DS4_N_LAYER; il++) {
             const uint32_t ratio = ds4_layer_compress_ratio(il);
             if (ratio == 0) continue;
-            m.compressed_bytes += (uint64_t)m.comp_cap *
+            const uint32_t layer_comp_cap = ctx / ratio + 2u;
+            m.compressed_bytes += (uint64_t)layer_comp_cap *
                                   DS4_N_HEAD_DIM *
                                   sizeof(float);
             if (ratio == 4) {
-                m.compressed_bytes += (uint64_t)m.comp_cap *
+                m.compressed_bytes += (uint64_t)layer_comp_cap *
                                       DS4_N_INDEXER_HEAD_DIM *
                                       sizeof(float);
             }
@@ -16051,7 +16087,7 @@ int ds4_session_load_payload(ds4_session *s, FILE *fp, uint64_t payload_bytes, c
             token_vec_free(&new_checkpoint);
             return 1;
         }
-        if (n_comp[il] > saved_comp_cap || n_comp[il] > g->comp_cap) {
+        if (n_comp[il] > saved_comp_cap || n_comp[il] > g->layer_comp_cap[il]) {
             token_vec_free(&new_checkpoint);
             payload_set_err(err, errlen, "KV checkpoint has invalid compressed row count");
             return 1;
@@ -16062,7 +16098,7 @@ int ds4_session_load_payload(ds4_session *s, FILE *fp, uint64_t payload_bytes, c
             token_vec_free(&new_checkpoint);
             return 1;
         }
-        if (n_index_comp[il] > saved_comp_cap || n_index_comp[il] > g->comp_cap) {
+        if (n_index_comp[il] > saved_comp_cap || n_index_comp[il] > g->layer_comp_cap[il]) {
             token_vec_free(&new_checkpoint);
             payload_set_err(err, errlen, "KV checkpoint has invalid indexer row count");
             return 1;
