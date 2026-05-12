@@ -34,7 +34,7 @@ METAL_LDLIBS := $(LDLIBS)
 ROCM_HOME ?= /opt/rocm
 HIPIFY ?= $(ROCM_HOME)/bin/hipify-perl
 HIPCC ?= $(ROCM_HOME)/bin/hipcc
-HIPFLAGS ?= -O3 --offload-arch=native $(NATIVE_CPU_FLAG)
+HIPFLAGS ?= -O3 --offload-arch=native -mno-wavefrontsize64 $(NATIVE_CPU_FLAG)
 ROCM_CFLAGS = $(CFLAGS) -DDS4_USE_ROCM
 endif
 
@@ -71,16 +71,10 @@ cpu: ds4_cli_cpu.o ds4_server_cpu.o ds4_bench_cpu.o linenoise.o rax.o $(CPU_CORE
 	$(CC) $(CFLAGS) -o ds4-server ds4_server_cpu.o rax.o $(CPU_CORE_OBJS) $(LDLIBS)
 	$(CC) $(CFLAGS) -o ds4-bench ds4_bench_cpu.o $(CPU_CORE_OBJS) $(LDLIBS)
 
-rocm: ds4-rocm ds4-rocm-server ds4-rocm-bench
-
-ds4-rocm: ds4_cli_rocm.o linenoise.o ds4.o ds4_rocm.o
-	$(HIPCC) $(HIPFLAGS) -o $@ $^ -lhipblas
-
-ds4-rocm-server: ds4_server_rocm.o rax.o ds4.o ds4_rocm.o
-	$(HIPCC) $(HIPFLAGS) -o $@ $^ -lhipblas
-
-ds4-rocm-bench: ds4_bench_rocm.o ds4.o ds4_rocm.o
-	$(HIPCC) $(HIPFLAGS) -o $@ $^ -lhipblas
+rocm: ds4_cli_rocm.o ds4_server_rocm.o ds4_bench_rocm.o linenoise.o rax.o ds4.o ds4_rocm.o
+	$(HIPCC) $(HIPFLAGS) -o ds4 ds4_cli_rocm.o linenoise.o ds4.o ds4_rocm.o -lhipblas
+	$(HIPCC) $(HIPFLAGS) -o ds4-server ds4_server_rocm.o rax.o ds4.o ds4_rocm.o -lhipblas
+	$(HIPCC) $(HIPFLAGS) -o ds4-bench ds4_bench_rocm.o ds4.o ds4_rocm.o -lhipblas
 endif
 
 ds4.o: ds4.c ds4.h ds4_gpu.h
@@ -150,4 +144,4 @@ test: ds4_test
 	./ds4_test
 
 clean:
-	rm -f ds4 ds4-server ds4-bench ds4-rocm ds4-rocm-server ds4-rocm-bench ds4_cpu ds4_native ds4_server_test ds4_test *.o ds4_rocm.hip
+	rm -f ds4 ds4-server ds4-bench ds4_cpu ds4_native ds4_server_test ds4_test *.o ds4_rocm.hip

@@ -13,6 +13,9 @@ sed -i 's@#if __CUDA_ARCH__ >= 700@#if !defined(__CUDA_ARCH__) || __CUDA_ARCH__ 
 sed -i 's/0xffffffffu/0xffffffffull/g' "$F"
 sed -i 's/0xffu *<</0xffull <</g' "$F"
 sed -i 's/0xffffu *<</0xffffull <</g' "$F"
+sed -i 's/__shfl_down_sync(0xffffffffull,/__shfl_down_sync(__activemask(),/g' "$F"
+sed -i 's/__shfl_sync(0xffffffffull,/__shfl_sync(__activemask(),/g' "$F"
+sed -i 's/__shfl_xor_sync(0xffffffffull,/__shfl_xor_sync(__activemask(),/g' "$F"
 
 sed -i 's/uint32_t mask = 0xffull/uint64_t mask = 0xffull/g' "$F"
 sed -i 's/uint32_t mask = 0xffffull/uint64_t mask = 0xffffull/g' "$F"
