@@ -1,9 +1,11 @@
 /ds4
 /ds4-server
 /ds4-bench
+/ds4-rocm*
 /ds4_native
 /ds4_server_test
 /ds4_test
+/ds4_rocm.hip*
 /ds4flash.gguf
 /TODO.md
 /gguf/
