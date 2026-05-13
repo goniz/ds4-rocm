@@ -21,7 +21,7 @@ else
 CFLAGS += -D_GNU_SOURCE -fno-finite-math-only
 CUDA_HOME ?= /usr/local/cuda
 NVCC ?= $(CUDA_HOME)/bin/nvcc
-CUDA_ARCH ?= native
+CUDA_ARCH ?=
 ifneq ($(strip $(CUDA_ARCH)),)
 NVCC_ARCH_FLAGS := -arch=$(CUDA_ARCH)
 endif
@@ -38,11 +38,18 @@ HIPFLAGS ?= -O3 --offload-arch=native -mno-wavefrontsize64 $(NATIVE_CPU_FLAG)
 ROCM_CFLAGS = $(CFLAGS) -DDS4_USE_ROCM
 endif
 
-.PHONY: all clean test cpu rocm cuda-regression
-
-all: ds4 ds4-server ds4-bench
+.PHONY: all help clean test cpu rocm cuda cuda-spark cuda-generic cuda-regression
 
 ifeq ($(UNAME_S),Darwin)
+all: ds4 ds4-server ds4-bench
+
+help:
+	@echo "DS4 build targets:"
+	@echo "  make              Build Metal ./ds4, ./ds4-server, and ./ds4-bench"
+	@echo "  make cpu          Build CPU-only ./ds4, ./ds4-server, and ./ds4-bench"
+	@echo "  make test         Build and run tests"
+	@echo "  make clean        Remove build outputs"
+
 ds4: ds4_cli.o linenoise.o $(CORE_OBJS)
 	$(CC) $(CFLAGS) -o $@ ds4_cli.o linenoise.o $(CORE_OBJS) $(METAL_LDLIBS)
 
@@ -60,6 +67,31 @@ cpu: ds4_cli_cpu.o ds4_server_cpu.o ds4_bench_cpu.o linenoise.o rax.o $(CPU_CORE
 cuda-regression:
 	@echo "cuda-regression requires a CUDA build"
 else
+all: help
+
+help:
+	@echo "DS4 build targets:"
+	@echo "  make cuda-spark          Build CUDA for DGX Spark / GB10"
+	@echo "  make cuda-generic        Build CUDA for a generic local CUDA GPU"
+	@echo "  make cuda CUDA_ARCH=sm_N Build CUDA with an explicit nvcc -arch value"
+	@echo "  make cpu                 Build CPU-only ./ds4, ./ds4-server, and ./ds4-bench"
+	@echo "  make test                Build and run tests"
+	@echo "  make clean               Remove build outputs"
+
+cuda-spark:
+	$(MAKE) ds4 ds4-server ds4-bench CUDA_ARCH=
+
+cuda-generic:
+	$(MAKE) ds4 ds4-server ds4-bench CUDA_ARCH=native
+
+cuda:
+	@if [ -z "$(strip $(CUDA_ARCH))" ]; then \
+		echo "error: specify CUDA_ARCH, for example: make cuda CUDA_ARCH=sm_120"; \
+		echo "       or use make cuda-spark / make cuda-generic"; \
+		exit 2; \
+	fi
+	$(MAKE) ds4 ds4-server ds4-bench CUDA_ARCH="$(CUDA_ARCH)"
+
 ds4: ds4_cli.o linenoise.o $(CORE_OBJS)
 	$(NVCC) $(NVCCFLAGS) -o $@ $^ $(CUDA_LDLIBS)
 

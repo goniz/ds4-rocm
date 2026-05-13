@@ -3848,6 +3848,14 @@ void *ds4_gpu_tensor_contents(ds4_gpu_tensor *tensor) {
     return (uint8_t *)[obj.buffer contents] + obj.offset;
 }
 
+int ds4_gpu_tensor_fill_f32(ds4_gpu_tensor *tensor, float value, uint64_t count) {
+    if (!tensor || count > ds4_gpu_tensor_bytes(tensor) / sizeof(float)) return 0;
+    float *p = ds4_gpu_tensor_contents(tensor);
+    if (!p && count != 0) return 0;
+    for (uint64_t i = 0; i < count; i++) p[i] = value;
+    return 1;
+}
+
 int ds4_gpu_tensor_write(ds4_gpu_tensor *tensor, uint64_t offset, const void *data, uint64_t bytes) {
     if (!tensor || (!data && bytes != 0)) return 0;
     DS4MetalTensor *obj = ds4_gpu_tensor_obj(tensor);
@@ -13056,7 +13064,8 @@ int ds4_gpu_routed_moe_batch_tensor(
         uint32_t                n_expert,
         float                   clamp,
         const ds4_gpu_tensor *x,
-        uint32_t                n_tokens) {
+        uint32_t                n_tokens,
+        bool                   *mid_is_f16) {
     if (!g_initialized && !ds4_gpu_init()) return 0;
     if (!out || !gate || !up || !mid || !x || !model_map || !selected || !weights ||
         n_tokens == 0 || n_expert == 0 || n_expert > 6) {
@@ -13334,6 +13343,7 @@ int ds4_gpu_routed_moe_batch_tensor(
             use_mm_id &&
             use_fused_activation &&
             request_mid_f16;
+        if (mid_is_f16) *mid_is_f16 = use_mid_f16;
         if (ok && use_fused_activation) {
             ok = ds4_gpu_encode_moe_swiglu_weight(cb,
                                                     gatebuf,
