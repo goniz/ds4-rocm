@@ -33,3 +33,14 @@ sed -i 's/cuda_block_iq2_xxs/ds4_block_iq2_xxs/g' "$F"
 sed -i 's/"ds4: CUDA/"ds4: ROCm/g' "$F"
 
 perl -i -0pe 's/"ds4: ROCm backend initialized on %s \(sm_%d%d\)\\n",\n\s*prop\.name, prop\.major, prop\.minor/"ds4: ROCm backend initialized on %s (%s)\\n",\n                prop.name, prop.gcnArchName/s' "$F"
+
+if ! grep -q 'extern "C" int ds4_gpu_tensor_fill_f32' "$F"; then
+    sed -i '/^__global__ static void compressor_store_kernel(/i\
+extern "C" int ds4_gpu_tensor_fill_f32(ds4_gpu_tensor *tensor, float value, uint64_t count) {\
+    if (!tensor || count > tensor->bytes / sizeof(float)) return 0;\
+    if (count == 0) return 1;\
+    fill_f32_kernel<<<(count + 255u) / 256u, 256>>>((float *)tensor->ptr, count, value);\
+    return cuda_ok(hipGetLastError(), "tensor fill f32 launch");\
+}\
+' "$F"
+fi
