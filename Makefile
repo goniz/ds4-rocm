@@ -30,9 +30,15 @@ CUDA_LDLIBS ?= -lm -Xcompiler -pthread -L$(CUDA_HOME)/targets/sbsa-linux/lib -L$
 CORE_OBJS = ds4.o ds4_cuda.o
 CPU_CORE_OBJS = ds4_cpu.o
 METAL_LDLIBS := $(LDLIBS)
+
+ROCM_HOME ?= /opt/rocm
+HIPIFY ?= $(ROCM_HOME)/bin/hipify-perl
+HIPCC ?= $(ROCM_HOME)/bin/hipcc
+HIPFLAGS ?= -O3 --offload-arch=native -mno-wavefrontsize64 $(NATIVE_CPU_FLAG)
+ROCM_CFLAGS = $(CFLAGS) -DDS4_USE_ROCM
 endif
 
-.PHONY: all help clean test cpu cuda cuda-spark cuda-generic cuda-regression
+.PHONY: all help clean test cpu rocm cuda cuda-spark cuda-generic cuda-regression
 
 ifeq ($(UNAME_S),Darwin)
 all: ds4 ds4-server ds4-bench
@@ -100,6 +106,11 @@ cpu: ds4_cli_cpu.o ds4_server_cpu.o ds4_bench_cpu.o linenoise.o rax.o $(CPU_CORE
 	$(CC) $(CFLAGS) -o ds4-server ds4_server_cpu.o rax.o $(CPU_CORE_OBJS) $(LDLIBS)
 	$(CC) $(CFLAGS) -o ds4-bench ds4_bench_cpu.o $(CPU_CORE_OBJS) $(LDLIBS)
 
+rocm: ds4_cli_rocm.o ds4_server_rocm.o ds4_bench_rocm.o linenoise.o rax.o ds4.o ds4_rocm.o
+	$(HIPCC) $(HIPFLAGS) -o ds4 ds4_cli_rocm.o linenoise.o ds4.o ds4_rocm.o -lhipblas
+	$(HIPCC) $(HIPFLAGS) -o ds4-server ds4_server_rocm.o rax.o ds4.o ds4_rocm.o -lhipblas
+	$(HIPCC) $(HIPFLAGS) -o ds4-bench ds4_bench_rocm.o ds4.o ds4_rocm.o -lhipblas
+
 cuda-regression: tests/cuda_long_context_smoke
 	./tests/cuda_long_context_smoke
 endif
@@ -110,11 +121,20 @@ ds4.o: ds4.c ds4.h ds4_gpu.h
 ds4_cli.o: ds4_cli.c ds4.h linenoise.h
 	$(CC) $(CFLAGS) -c -o $@ ds4_cli.c
 
+ds4_cli_rocm.o: ds4_cli.c ds4.h linenoise.h
+	$(CC) $(ROCM_CFLAGS) -c -o $@ ds4_cli.c
+
 ds4_server.o: ds4_server.c ds4.h rax.h
 	$(CC) $(CFLAGS) -c -o $@ ds4_server.c
 
+ds4_server_rocm.o: ds4_server.c ds4.h rax.h
+	$(CC) $(ROCM_CFLAGS) -c -o $@ ds4_server.c
+
 ds4_bench.o: ds4_bench.c ds4.h
 	$(CC) $(CFLAGS) -c -o $@ ds4_bench.c
+
+ds4_bench_rocm.o: ds4_bench.c ds4.h
+	$(CC) $(ROCM_CFLAGS) -c -o $@ ds4_bench.c
 
 ds4_test.o: tests/ds4_test.c ds4_server.c ds4.h rax.h
 	$(CC) $(CFLAGS) -Wno-unused-function -c -o $@ tests/ds4_test.c
@@ -146,6 +166,14 @@ ds4_metal.o: ds4_metal.m ds4_gpu.h $(METAL_SRCS)
 ds4_cuda.o: ds4_cuda.cu ds4_gpu.h ds4_iq2_tables_cuda.inc
 	$(NVCC) $(NVCCFLAGS) -c -o $@ ds4_cuda.cu
 
+ds4_rocm.hip: ds4_cuda.cu ds4_gpu.h ds4_iq2_tables_cuda.inc patch_ds4_rocm.sh ds4_hip_compat.h
+	cp ds4_cuda.cu $@
+	$(HIPIFY) --inplace $@
+	sh patch_ds4_rocm.sh $@
+
+ds4_rocm.o: ds4_rocm.hip ds4_gpu.h ds4_iq2_tables_rocm.inc
+	$(HIPCC) $(HIPFLAGS) -c -o $@ ds4_rocm.hip
+
 tests/cuda_long_context_smoke: tests/cuda_long_context_smoke.o ds4_cuda.o
 	$(NVCC) $(NVCCFLAGS) -o $@ $^ $(CUDA_LDLIBS)
 
@@ -160,4 +188,4 @@ test: ds4_test
 	./ds4_test
 
 clean:
-	rm -f ds4 ds4-server ds4-bench ds4_cpu ds4_native ds4_server_test ds4_test *.o tests/cuda_long_context_smoke tests/cuda_long_context_smoke.o
+	rm -f ds4 ds4-server ds4-bench ds4_cpu ds4_native ds4_server_test ds4_test *.o ds4_rocm.hip tests/cuda_long_context_smoke tests/cuda_long_context_smoke.o
